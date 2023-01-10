@@ -1,0 +1,12 @@
+<!DOCTYPE html><html><head><title>Validation report for ../dog-and-duck/resources/activitystreams-test-documents/vocabulary-ex10-jsonld.json</title><meta content="dog-and-duck/quack 0.1.0-SNAPSHOT" name="generator" /><link href="resources/public/css/style.css" media="screen" rel="stylesheet" type="text/css" /></head><body><h1>Validation report for ../dog-and-duck/resources/activitystreams-test-documents/vocabulary-ex10-jsonld.json</h1><p>Generated on 2023-01-10T13:21:52.260571 by dog-and-duck/quack 0.1.0-SNAPSHOT</p><h2>The following faults were found</h2><table><tr><th>@context</th><th>type</th><th>narrative</th><th>fault</th><th>id</th><th>severity</th></tr><tr class="should"><td>https://simon-brooke.github.io/dog-and-duck/codox/Validation_Faults.html</td><td>Fault</td><td>Section 3 of the ActivityPub specification states Implementers SHOULD include the ActivityPub context in their object definitions`.</td><td>no-context</td><td>https://mason/fault/42756:1673356912254</td><td>should</td></tr><tr class="minor"><td>https://simon-brooke.github.io/dog-and-duck/codox/Validation_Faults.html</td><td>Fault</td><td>The ActivityPub specification allows objects without `id` fields only if they are intentionally transient; even so it is preferred that the object should have an explicit null id.</td><td>no-id-transient</td><td>https://mason/fault/42756:1673356912258</td><td>minor</td></tr></table><div class="text-analysed"><h2>text-analysed</h2><pre class="ft-syntax-highlight" data-syntax-theme="bootstrap" data-syntax="javascript" data-ui-theme="light">{"@context":"http:\/\/www.w3.org\/ns\/activitystreams",
+ "name":
+ "Sally added a picture of her cat to her cat picture collection",
+ "type":"Add",
+ "actor":{"type":"Person", "name":"Sally"},
+ "object":
+ {"type":"Image",
+  "name":"A picture of my cat",
+  "url":"http:\/\/example.org\/img\/cat.png"},
+ "origin":{"type":"Collection", "name":"Camera Roll"},
+ "target":{"type":"Collection", "name":"My Cat Pictures"}}
+</pre></div></body></html>
