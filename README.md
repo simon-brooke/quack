@@ -35,6 +35,8 @@ The full range of command-line switches is as follows:
 
 Note, though, that internationalisation files for languages other than British English have not yet been written, and that one is not complete.
 
+Note also that reification is not, at the time of writing, working.
+
 The following severity levels are understood:
 
    0. `info` things which are not actuallys fault, but issues noted during
@@ -48,7 +50,6 @@ The following severity levels are understood:
    4. `critical` instances where I believe the fault means that
       the object cannot be meaningfully processed.
 
-
 ## Examples
 
 ...
@@ -59,23 +60,12 @@ Full documentation is [here](https://simon-brooke.github.io/dog-and-duck/).
 
 ### Bugs
 
-...
-
-### Any Other Sections
-### That You Think
-### Might be Useful
+Many. Ducks like bugs.
 
 ## License
 
-Copyright © 2023 FIXME
+Copyright © 2023 Simon Brooke
 
-This program and the accompanying materials are made available under the
-terms of the Eclipse Public License 2.0 which is available at
-http://www.eclipse.org/legal/epl-2.0.
-
-This Source Code may also be made available under the following Secondary
-Licenses when the conditions for such availability set forth in the Eclipse
-Public License, v. 2.0 are satisfied: GNU General Public License as published by
+This Source Code is made available under GNU General Public License as published by
 the Free Software Foundation, either version 2 of the License, or (at your
-option) any later version, with the GNU Classpath Exception which is available
-at https://www.gnu.org/software/classpath/license.html.
+option) any later version.

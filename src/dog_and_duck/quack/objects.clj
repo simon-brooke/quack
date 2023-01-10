@@ -419,7 +419,7 @@
            :if-invalid [:must :invalid-units]
            ;; the narrative says that `anyURI`, but actually unless it's a recognised
            ;; unit the property is useless. These are the units explicitly specified.
-           :validator (fn [pv] (#{"cm" "feet" "inches" "km" "m" "miles"} pv))}
+           :validator (fn [pv] (truthy? (#{"cm" "feet" "inches" "km" "m" "miles"} pv)))}
    :updated {:functional true
              :if-invalid [:must :invalid-updated]
              :validator xsd-date-time?}
@@ -460,7 +460,7 @@
                        ;; from an 'or-faults' function which did not
                        ;; return faults
           (fault-list? r) (concat f r)
-          (false? r) (list f)
+          (false? r) f
           :else (doall
                  (warn "Unexpected return value from validator"
                        {:return r

@@ -11,7 +11,7 @@
             [dog-and-duck.quack.utils :refer [filter-severity safe-keyword]]
             [hiccup.core :refer [html]]
             [scot.weft.i18n.core :refer [*config*
-                                         get-message 
+                                         get-message
                                          parse-accept-language-header]]
             [trptr.java-wrapper.locale :as locale])
   (:gen-class))
@@ -34,8 +34,8 @@
 
 (def ^:const stylesheet-url
   ;; TODO: fix this to github pages before go live
-  ;;"https://simon-brooke.github.io/quack/style.css"
-  "resources/public/css/style.css")
+  ;;"https://simon-brooke.github.io/quack/css/style.css"
+  "../css/style.css")
 
 (def cli-options
   ;; An option with a required argument
@@ -116,20 +116,18 @@
        second)
       (catch Exception _ nil))]))
 
-(defn- output-html-text-analysed 
+(defn- output-html-text-analysed
   [options]
   [:div
    {:class "text-analysed"}
-   [:h2 :text-analysed]
+   [:h2 (get-message :text-analysed)]
    [:pre {:class "ft-syntax-highlight"
           :data-syntax "javascript"
           :data-syntax-theme "bootstrap"
           :data-ui-theme "light"}
     (with-out-str
-      (json/pprint
-       (read-str
-        (slurp
-         (:input options)))))]])
+      (slurp
+       (:input options)))]])
 
 (defn output-html
   [faults options]
