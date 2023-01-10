@@ -5,11 +5,14 @@
             [clojure.string :refer [join]]
             [clojure.tools.cli :refer [parse-opts]]
             [clojure.walk :refer [keywordize-keys]]
+            [dog-and-duck.quack.control-variables :refer [*reify-refs*]]
             [dog-and-duck.quack.constants :refer [severity]]
             [dog-and-duck.quack.objects :refer [object-faults]]
-            [dog-and-duck.quack.utils :refer [filter-severity]]
+            [dog-and-duck.quack.utils :refer [filter-severity safe-keyword]]
             [hiccup.core :refer [html]]
-            [scot.weft.i18n.core :refer [get-message *config*]]
+            [scot.weft.i18n.core :refer [*config*
+                                         get-message 
+                                         parse-accept-language-header]]
             [trptr.java-wrapper.locale :as locale])
   (:gen-class))
 
@@ -36,24 +39,28 @@
 
 (def cli-options
   ;; An option with a required argument
-  [["-i" "--input SOURCE" "The file or URL to validate"
-    :default "standard input"]
-   ["-o" "--output DEST" "The file to write to, defaults to standard out"
-    :default "standard output"]
-   ["-f" "--format FORMAT" "The format to output, one of `edn` `csv` `html`"
+  [["-i" "--input SOURCE" (get-message :cli-help-input)
+    :default "standard in"]
+   ["-o" "--output DEST" (get-message :cli-help-output)
+    :default "standard out"]
+   ["-f" "--format FORMAT" (get-message :cli-help-format)
     :default :edn
-    :parse-fn #(keyword %)
-    :validate [#(#{:csv :edn :html} %) "Expect one of `edn` `csv` `html`"]]
-   ["-l" "--language LANG" "The ISO 639-1 code for the language to output"
-    :default (-> (locale/get-default) locale/to-language-tag)]
-   ["-s" "--severity LEVEL" "The minimum severity of faults to report"
+    :parse-fn #(safe-keyword %)
+    :validate [#(#{:csv :edn :json :html} %) (get-message :cli-expected-format)]]
+   ["-l" "--language LANG" (get-message :cli-help-language)
+    :default (-> (locale/get-default) locale/to-language-tag)
+    :validate [#(try (parse-accept-language-header %)
+                     (catch Exception _ false))
+               (get-message :cli-expected-language)]]
+   ["-s" "--severity LEVEL" (get-message :cli-help-severity)
     :default :info
-    :parse-fn #(keyword %)
+    :parse-fn #(safe-keyword %)
     :validate [#(severity %) (join " "
                                    (cons
-                                    "Expected one of"
+                                    (get-message :cli-expected-one)
                                     (map name severity)))]]
-   ["-h" "--help"]])
+   ["-r" "--reify" (get-message :cli-help-reify)]
+   ["-h" "--help" (get-message :cli-help-help)]])
 
 (defn validate
   [source]
@@ -126,7 +133,7 @@
 
 (defn output-html
   [faults options]
-  (let [source-name (if (= (:input options) *in*) "Standard input" (str (:input options)))
+  (let [source-name (if (= (:input options) *in*) "standard in" (str (:input options)))
         title (join " " [(get-message :validation-report-for) source-name])
         cols (set (reduce concat (map keys faults)))
         version (version-string)]
@@ -177,10 +184,10 @@
   [& args]
   (let [opts (parse-opts args cli-options)
         options (assoc (:options opts)
-                       :input (if (= (:input (:options opts)) "standard input")
+                       :input (if (= (:input (:options opts)) "standard in")
                                 *in*
                                 (:input (:options opts)))
-                       :output (if (= (:output (:options opts)) "standard output")
+                       :output (if (= (:output (:options opts)) "standard out")
                                  *out*
                                  (:output (:options opts))))]
     ;;(println options)
@@ -189,7 +196,8 @@
     (when (:errors opts)
       (println (:errors opts)))
     (when-not (or (:help options) (:errors options))
-      (binding [*config* (assoc *config* :default-language (:language options))]
+      (binding [*config* (assoc *config* :default-language (:language options))
+                *reify-refs* (:reify options)]
         (output
          (validate (:input options))
          options)))))

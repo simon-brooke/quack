@@ -24,12 +24,13 @@ Nevertheless I think that this is a basis on which a useful validator can be bui
 
 The full range of command-line switches is as follows:
 ```
-    -i, --input SOURCE    standard input   The file or URL to validate
-    -o, --output DEST     standard output  The file to write to, defaults to standard out
-    -f, --format FORMAT   :edn             The format to output, one of `edn` `csv` `html`
-    -l, --language LANG   en-GB            The ISO 639-1 code for the language to output
-    -s, --severity LEVEL  :info            The minimum severity of faults to report
-    -h, --help                             Print this message and exit
+  -i, --input SOURCE    standard in   The file or URL to validate.
+  -o, --output DEST     standard out  The file to write to.
+  -f, --format FORMAT   :edn          The format to output, one of `csv`, `edn`, `json`, `html`.
+  -l, --language LANG   en-GB         The ISO 639-1 code for the language to output.
+  -s, --severity LEVEL  :info         The minimum severity of faults to report.
+  -r, --reify                         If set, reify objects referenced by URIs and check them.
+  -h, --help                          Print this message and exit.
 ```
 
 Note, though, that internationalisation files for languages other than British English have not yet been written, and that one is not complete.

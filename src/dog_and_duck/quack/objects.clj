@@ -2,29 +2,26 @@
   (:require [clojure.data.json :as json]
             [clojure.set :refer [union]]
             [dog-and-duck.quack.constants :refer [actor-types
-                                                        noun-types
-                                                        re-rfc5646]]
+                                                  noun-types
+                                                  re-rfc5646]]
             [dog-and-duck.quack.control-variables :refer [*reify-refs*]]
             [dog-and-duck.quack.time :refer [xsd-date-time?
-                                                   xsd-duration?]]
+                                             xsd-duration?]]
             [dog-and-duck.quack.utils :refer [concat-non-empty
-                                                    cond-make-fault-object
-                                                    has-activity-type?
-                                                    has-context?
-                                                    has-type?
-                                                    has-type-or-fault
-                                                    make-fault-object
-                                                    nil-if-empty
-                                                    object-or-uri?
-                                                    truthy?
-                                                    xsd-non-negative-integer?]]
+                                              cond-make-fault-object
+                                              fault-list?
+                                              has-activity-type?
+                                              has-context?
+                                              has-type?
+                                              has-type-or-fault
+                                              make-fault-object
+                                              nil-if-empty
+                                              object-or-uri?
+                                              truthy?
+                                              xsd-non-negative-integer?]]
             [taoensso.timbre :refer [warn]])
   (:import [java.io FileNotFoundException]
            [java.net URI URISyntaxException]))
-
-(defn- xsd-float?
-  [pv]
-  (or (integer? pv) (float? pv)))
 
 ;;;     Copyright (C) Simon Brooke, 2022
 
@@ -41,6 +38,85 @@
 ;;;     You should have received a copy of the GNU General Public License
 ;;;     along with this program; if not, write to the Free Software
 ;;;     Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+(declare object-faults)
+
+(defn- xsd-float?
+  [pv]
+  (or (integer? pv) (float? pv)))
+
+
+(def maybe-reify
+  "If `*reify-refs*` is `true`, return the object at this `target` URI.
+   Returns `nil` if
+   
+   1. `*reify-refs*` is false;
+   2. the object was not found;
+   3. access to the object was not permitted.
+   
+   Consequently, use with care."
+  (memoize
+   (fn [target]
+     (try (let [uri (URI. target)]
+            (when *reify-refs*
+              (json/read-str (slurp uri))))
+          (catch URISyntaxException _
+            (warn "Reification target" target "was not a valid URI.")
+            nil)
+          (catch FileNotFoundException _
+            (warn "Reification target" target "was not found.")
+            nil)))))
+
+(defn maybe-reify-or-faults
+  "If `*reify-refs*` is `true`, runs basic checks on the object at this 
+   `target` URI, if it is found, or a list containing a fault object with
+   this `severity` and `token` if it is not."
+  [value expected-type severity token]
+  (let [object (maybe-reify value)]
+    (cond object
+          (object-faults object expected-type)
+          *reify-refs* (list (make-fault-object severity token)))))
+
+(defn object-reference-or-faults
+  "If this `value` is either 
+   
+   1. an object of `expected-type`;
+   2. a URI referencing an object of  `expected-type`; or
+   3. a link object referencing an object of  `expected-type`
+  
+   and no faults are returned from validating the linked object, then return
+   `nil`; else return a sequence comprising a fault object with this `severity`
+   and `token`, prepended to the faults returned.
+   
+   As with `has-type-or-fault` (q.v.), `expected-type` may be passed as a
+   string, as a set of strings, or `nil` (indicating the type of the 
+   referenced object should not be checked).
+   
+   **NOTE THAT** if `*reify-refs*` is `false`, referenced objects will not
+   actually be checked."
+  [value expected-type severity token]
+  (let [faults (cond
+                 (string? value) (maybe-reify-or-faults value severity token expected-type)
+                 (map? value) (if (has-type? value "Link")
+                                (cond
+                                  ;; if we were looking for a link and we've 
+                                  ;; found a link, that's OK.
+                                  (= expected-type "Link") nil
+                                  (and (set? expected-type) (expected-type "Link")) nil
+                                  (nil? expected-type) nil
+                                  :else
+                                  (object-reference-or-faults
+                                   (:href value) expected-type severity token))
+                                (object-faults value expected-type))
+                 :else (throw
+                        (ex-info
+                         "Argument `value` was not an object or a link to an object"
+                         {:arguments {:value value}
+                          :expected-type expected-type
+                          :severity severity
+                          :token token})))]
+    (when faults (cons (make-fault-object severity token) faults))))
+
 
 (def object-expected-properties
   "Requirements of properties of object, cribbed from
@@ -60,8 +136,9 @@
    * `:required` a boolean, or a function of one argument returning a 
       boolean, in which case the function will be applied to the object
       having the property;
-   * `:validator` a function of one argument returning a boolean, which will 
-      be applied to the value or values of the identified property."
+   * `:validator` either a function of one argument returning a boolean, or
+      a function of one argument returning either `nil` or a list of faults,
+      which will be applied to the value or values of the identified property."
   {:accuracy {:functional false
               :if-invalid [:must :invalid-number]
               :validator (fn [pv] (and (xsd-float? pv)
@@ -130,9 +207,6 @@
    :describes {:functional true
                :required (fn [x] (has-type? x "Profile"))
                :if-invalid [:must :invalid-describes]
-               ;; TODO: actually the spec says this MUST be an object and
-               ;; not a URI, which it doesn't say anywhere else, but this seems
-               ;; to make no sense?
                :validator object-or-uri?}
    :duration {:functional false
               :if-invalid [:must :invalid-duration]
@@ -160,11 +234,13 @@
                 :if-invalid [:must :invalid-former-type]
                 :required (fn [x] (has-type? x "Tombstone"))
                 ;; The narrative of the spec says this should be an `Object`,
-                ;; but in all the provided examples it's a string.
+                ;; but in all the provided examples it's a string. Furthermore,
+                ;; it seems it must name a known object type within the context.
                 :validator string?}
    :generator {:functional false
                :if-invalid [:must :invalid-generator]
-               :validator object-or-uri?}
+               :validator #(try (uri? (URI. %))
+                                (catch Exception _ false))}
    :height {:functional false
             :if-invalid [:must :invalid-non-negative]
             :validator xsd-non-negative-integer?}
@@ -255,19 +331,19 @@
            ;; that's hard to check.
            :if-invalid [:must :invalid-option]
            :validator object-or-uri?}
-   
+
    :orderedItems {:collection true
-           :functional false
-           :if-invalid [:must :invalid-items]
-           :if-missing [:must :no-items-or-pages]
-           :required (fn [x] (or (has-type? x "OrderedCollectionPage")
-                                 (and (has-type? x "OrderedCollection")
+                  :functional false
+                  :if-invalid [:must :invalid-items]
+                  :if-missing [:must :no-items-or-pages]
+                  :required (fn [x] (or (has-type? x "OrderedCollectionPage")
+                                        (and (has-type? x "OrderedCollection")
                                       ;; if it's a collection and has pages,
                                       ;; it doesn't need items.
-                                      (not (:current x))
-                                      (not (:first x))
-                                      (not (:last x)))))
-           :validator (fn [pv] (and (coll? pv) (every? object-or-uri? pv)))}
+                                             (not (:current x))
+                                             (not (:first x))
+                                             (not (:last x)))))
+                  :validator (fn [pv] (and (coll? pv) (every? object-or-uri? pv)))}
    :origin {:functional false
             :if-invalid [:must :invalid-origin]
             :validator object-or-uri?}
@@ -354,40 +430,58 @@
            :if-invalid [:must :invalid-width]
            :validator xsd-non-negative-integer?}})
 
-(defn check-property-required [obj prop clause]
+(defn check-property-required
+  "Check whether this `prop` of this `obj` is required with respect to 
+   this `clause`; if it is both required and missing, return a list of
+   one fault; else return `nil`."
+   [obj prop clause]
   (let [required (:required clause)
         [severity token] (:if-missing clause)]
     (when required
       (when
        (and (apply required (list obj)) (not (obj prop)))
-        (make-fault-object severity token)))))
+        (list (make-fault-object severity token))))))
 
 (defn check-property-valid
+  "Check that this `prop` of this `obj` is valid with respect to this `clause`.
+   
+   return `nil` if no faults are found, else a list of faults."
   [obj prop clause]
   ;; (info "obj" obj "prop" prop "clause" clause)
   (let [val (obj prop)
         validator (:validator clause)
         [severity token] (:if-invalid clause)]
     (when (and val validator)
-      (cond-make-fault-object
-       (apply validator (list val))
-       severity token))))
+      (let [r (apply validator (list val))
+            f (list (make-fault-object severity token))]
+        (cond
+          (true? r) nil
+          (nil? r) nil ;; that's OK, too, because it's a return
+                       ;; from an 'or-faults' function which did not
+                       ;; return faults
+          (fault-list? r) (concat f r)
+          (false? r) (list f)
+          :else (doall
+                 (warn "Unexpected return value from validator"
+                       {:return r
+                        :arguments {:object obj
+                                    :property prop
+                                    :clause clause}})
+                 f))))))
 
 (defn check-property [obj prop]
   (assert (map? obj))
   (assert (keyword? prop))
   (let [clause (object-expected-properties prop)]
-    (nil-if-empty
-     (remove nil?
-             (list
-              (check-property-required obj prop clause)
-              (check-property-valid obj prop clause))))))
+    (concat-non-empty
+     (check-property-required obj prop clause)
+     (check-property-valid obj prop clause))))
 
 (defn properties-faults
   "Return a lost of faults found on properties of the object `x`, or
    `nil` if none are."
   [x]
-  (apply 
+  (apply
    concat-non-empty
    (let [props (set (keys x))
          required (set
@@ -430,92 +524,21 @@
       (list
        (has-type-or-fault x expected-type :critical :unexpected-type))))))
 
-(def maybe-reify
-  "If `*reify-refs*` is `true`, return the object at this `target` URI.
-   Returns `nil` if
-   
-   1. `*reify-refs*` is false;
-   2. the object was not found;
-   3. access to the object was not permitted.
-   
-   Consequently, use with care."
-  (memoize
-   (fn [target]
-     (try (let [uri (URI. target)]
-            (when *reify-refs*
-              (json/read-str (slurp uri))))
-          (catch URISyntaxException _
-            (warn "Reification target" target "was not a valid URI.")
-            nil)
-          (catch FileNotFoundException _
-            (warn "Reification target" target "was not found.")
-            nil)))))
-
-(defn maybe-reify-or-faults
-  "If `*reify-refs*` is `true`, runs basic checks on the object at this 
-   `target` URI, if it is found, or a list containing a fault object with
-   this `severity` and `token` if it is not."
-  [value expected-type severity token]
-  (let [object (maybe-reify value)]
-    (cond object
-          (object-faults object expected-type)
-          *reify-refs* (list (make-fault-object severity token)))))
-
-(defn object-reference-or-faults
-  "If this `value` is either 
-   
-   1. an object of `expected-type`;
-   2. a URI referencing an object of  `expected-type`; or
-   3. a link object referencing an object of  `expected-type`
-   
-   and no faults are returned from validating the linked object, then return
-   `nil`; else return a sequence comprising a fault object with this `severity`
-   and `token`, prepended to the faults returned.
-   
-   As with `has-type-or-fault` (q.v.), `expected-type` may be passed as a
-   string, as a set of strings, or `nil` (indicating the type of the 
-   referenced object should not be checked).
-   
-   **NOTE THAT** if `*reify-refs*` is `false`, referenced objects will not
-   actually be checked."
-  [value expected-type severity token]
-  (let [faults (cond
-                 (string? value) (maybe-reify-or-faults value severity token expected-type)
-                 (map? value) (if (has-type? value "Link")
-                                (cond
-                                  ;; if we were looking for a link and we've 
-                                  ;; found a link, that's OK.
-                                  (= expected-type "Link") nil
-                                  (and (set? expected-type) (expected-type "Link")) nil
-                                  (nil? expected-type) nil
-                                  :else
-                                  (object-reference-or-faults
-                                   (:href value) expected-type severity token))
-                                (object-faults value expected-type))
-                 :else (throw
-                        (ex-info
-                         "Argument `value` was not an object or a link to an object"
-                         {:arguments {:value value}
-                          :expected-type expected-type
-                          :severity severity
-                          :token token})))]
-    (when faults (cons (make-fault-object severity token) faults))))
-
-(defn coll-object-reference-or-fault
-  "As object-reference-or-fault, except `value` argument may also be a list of
-   objects and/or object references."
-  [value expected-type severity token]
-  (cond
-    (map? value) (object-reference-or-faults value expected-type severity token)
-    (coll? value) (concat-non-empty
-                   (map
-                    #(object-reference-or-faults
-                      % expected-type severity token)
-                    value))
-    :else (throw
-           (ex-info
-            "Argument `value` was not an object, a link to an object, nor a list of these."
-            {:arguments {:value value}
-             :expected-type expected-type
-             :severity severity
-             :token token}))))
+;; (defn coll-object-reference-or-fault
+;;   "As object-reference-or-fault, except `value` argument may also be a list of
+;;    objects and/or object references."
+;;   [value expected-type severity token]
+;;   (cond
+;;     (map? value) (object-reference-or-faults value expected-type severity token)
+;;     (coll? value) (concat-non-empty
+;;                    (map
+;;                     #(object-reference-or-faults
+;;                       % expected-type severity token)
+;;                     value))
+;;     :else (throw
+;;            (ex-info
+;;             "Argument `value` was not an object, a link to an object, nor a list of these."
+;;             {:arguments {:value value}
+;;              :expected-type expected-type
+;;              :severity severity
+;;              :token token}))))

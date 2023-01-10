@@ -217,6 +217,16 @@
                           (warn "No narrative provided for fault token " fault)
                           (str fault)))))
 
+(defn fault-list? 
+  "Return `true` if `x` is a sequence of fault objects, else `false`."
+  [x]
+  (and
+   (coll? x)
+   (seq x)
+   (every?
+    #(has-type? % "Fault") x)))
+
+
 (defmacro nil-if-empty
   "if `x` is an empty collection, return `nil`; else return `x`."
   [x]
@@ -287,3 +297,8 @@
 ;;   ([value severity token pattern]
 ;;    (when not (and (string? value) (re-matches pattern value))
 ;;          (make-fault-object severity token))))
+
+(defn safe-keyword
+  "Create and return a keyword from `token` without any embedded colons!"
+  [token]
+  (keyword (clojure.string/replace (str token) #"[^a-zA-Z-]*" "")))
