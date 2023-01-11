@@ -1,6 +1,7 @@
 (ns dog-and-duck.quack.objects
   (:require [clojure.data.json :as json]
             [clojure.set :refer [union]]
+            [clojure.walk :refer [keywordize-keys]]
             [dog-and-duck.quack.constants :refer [actor-types
                                                   noun-types
                                                   re-rfc5646]]
@@ -59,7 +60,7 @@
    (fn [target]
      (try (let [uri (URI. target)]
             (when *reify-refs*
-              (json/read-str (slurp uri))))
+              (keywordize-keys (json/read-str (slurp uri)))))
           (catch URISyntaxException _
             (warn "Reification target" target "was not a valid URI.")
             nil)
@@ -94,28 +95,48 @@
    
    **NOTE THAT** if `*reify-refs*` is `false`, referenced objects will not
    actually be checked."
-  [value expected-type severity token]
-  (let [faults (cond
-                 (string? value) (maybe-reify-or-faults value severity token expected-type)
-                 (map? value) (if (has-type? value "Link")
-                                (cond
+  ([value expected-type severity token]
+   (let [faults (cond
+                  (string? value) (maybe-reify-or-faults value severity token expected-type)
+                  (map? value) (if (has-type? value "Link")
+                                 (cond
                                   ;; if we were looking for a link and we've 
                                   ;; found a link, that's OK.
-                                  (= expected-type "Link") nil
-                                  (and (set? expected-type) (expected-type "Link")) nil
-                                  (nil? expected-type) nil
-                                  :else
-                                  (object-reference-or-faults
-                                   (:href value) expected-type severity token))
-                                (object-faults value expected-type))
-                 :else (throw
-                        (ex-info
-                         "Argument `value` was not an object or a link to an object"
-                         {:arguments {:value value}
-                          :expected-type expected-type
-                          :severity severity
-                          :token token})))]
-    (when faults (cons (make-fault-object severity token) faults))))
+                                   (= expected-type "Link") nil
+                                   (and (set? expected-type) (expected-type "Link")) nil
+                                   (nil? expected-type) nil
+                                   :else
+                                   (object-reference-or-faults
+                                    (:href value) expected-type severity token))
+                                 (object-faults value expected-type))
+                  :else (throw
+                         (ex-info
+                          "Argument `value` was not an object or a link to an object"
+                          {:arguments {:value value}
+                           :expected-type expected-type
+                           :severity severity
+                           :token token})))]
+     (when faults (cons (make-fault-object severity token) faults)))))
+
+(defn coll-object-reference-or-faults
+  "As object-reference-or-fault, except `value` argument may also be a list of
+    objects and/or object references."
+  [value expected-type severity token]
+  (cond
+    (string? value) (maybe-reify-or-faults value expected-type severity token)
+    (map? value) (object-reference-or-faults value expected-type severity token)
+    (coll? value) (concat-non-empty
+                   (map
+                    #(object-reference-or-faults
+                      % expected-type severity token)
+                    value))
+    :else (throw
+           (ex-info
+            "Argument `value` was not an object, a link to an object, nor a list of these."
+            {:arguments {:value value}
+             :expected-type expected-type
+             :severity severity
+             :token token}))))
 
 
 (def object-expected-properties
@@ -148,7 +169,10 @@
            :if-invalid [:must :invalid-actor]
            :if-missing [:must :no-actor]
            :required has-activity-type?
-           :validator object-or-uri?}
+           :validator (fn [pv] (coll-object-reference-or-faults pv
+                                                                actor-types
+                                                                :must
+                                                                :invalid-actor))}
    :altitude {:functional false
               :if-invalid [:must :invalid-number]
               :validator xsd-float?}
@@ -157,22 +181,30 @@
            ;; a Question should have a `:oneOf` or `:anyOf`, but at this layer
            ;; that's hard to check.
            :if-invalid [:must :invalid-option]
-           :validator object-or-uri?}
+           :validator (fn [pv] (coll-object-reference-or-faults pv nil
+                                                                :must
+                                                                :invalid-actor))}
    :attachment {:functional false
                 :if-invalid [:must :invalid-attachment]
-                :validator object-or-uri?}
+                :validator (fn [pv] (coll-object-reference-or-faults pv nil
+                                                                     :must
+                                                                     :invalid-attachment))}
    :attributedTo {:functional false
                   :if-invalid [:must :invalid-attribution]
-                  :validator object-or-uri?}
+                  :validator (fn [pv] (coll-object-reference-or-faults pv nil
+                                                                       :must
+                                                                       :invalid-attribution))}
    :audience {:functional false
               :if-invalid [:must :invalid-audience]
-              :validator object-or-uri?}
+              :validator (fn [pv] (coll-object-reference-or-faults pv nil
+                                                                   :must
+                                                                   :invalid-audience))}
    :bcc {:functional false
          :if-invalid [:must :invalid-audience] ;; do we need a separate message for bcc, cc, etc?
-         :validator object-or-uri?}
+         :validator (fn [pv] (coll-object-reference-or-faults pv nil :must :invalid-audience))}
    :cc {:functional false
         :if-invalid [:must :invalid-audience] ;; do we need a separate message for bcc, cc, etc?
-        :validator object-or-uri?}
+        :validator (fn [pv] (coll-object-reference-or-faults pv nil :must :invalid-audience))}
    :closed {:functional false
             :if-invalid [:must :invalid-closed]
             :validator (fn [pv] (truthy? (or (object-or-uri? pv)
@@ -183,7 +215,7 @@
              :validator string?}
    :context {:functional false
              :if-invalid [:must :invalid-context]
-             :validator object-or-uri?}
+             :validator (fn [pv] (coll-object-reference-or-faults pv nil :must :invalid-context))}
    :current {:functional true
              :if-missing [:minor :paged-collection-no-current]
              :if-invalid [:must :paged-collection-invalid-current]
@@ -197,8 +229,11 @@
                           (or (has-type? x "Collection")
                               (has-type? x "OrderedCollection"))
                           (:first x)))
-             :validator (fn [pv] (object-or-uri? pv #{"CollectionPage"
-                                                      "OrderedCollectionPage"}))}
+             :validator (fn [pv] (object-reference-or-faults pv
+                                                             #{"CollectionPage"
+                                                               "OrderedCollectionPage"}
+                                                             :must
+                                                             :paged-collection-invalid-current))}
    :deleted {:functional true
              :if-missing [:minor :tombstone-missing-deleted]
              :if-invalid [:must :invalid-deleted]
@@ -207,7 +242,9 @@
    :describes {:functional true
                :required (fn [x] (has-type? x "Profile"))
                :if-invalid [:must :invalid-describes]
-               :validator object-or-uri?}
+               :validator (fn [pv] (object-reference-or-faults pv nil
+                                                               :must
+                                                               :invalid-describes))}
    :duration {:functional false
               :if-invalid [:must :invalid-duration]
               :validator xsd-duration?}
@@ -227,8 +264,10 @@
                         (or (has-type? x "Collection")
                             (has-type? x "OrderedCollection"))
                         (:last x)))
-           :validator (fn [pv] (object-or-uri? pv #{"CollectionPage"
-                                                    "OrderedCollectionPage"}))}
+           :validator (fn [pv] (object-reference-or-faults pv #{"CollectionPage"
+                                                                "OrderedCollectionPage"}
+                                                           :must
+                                                           :paged-collection-invalid-first))}
    :formerType {:functional false
                 :if-missing [:minor :tombstone-missing-former-type]
                 :if-invalid [:must :invalid-former-type]
@@ -236,6 +275,7 @@
                 ;; The narrative of the spec says this should be an `Object`,
                 ;; but in all the provided examples it's a string. Furthermore,
                 ;; it seems it must name a known object type within the context.
+                ;; So TODO I'm assuming an error in the spec here.
                 :validator string?}
    :generator {:functional false
                :if-invalid [:must :invalid-generator]
@@ -253,7 +293,9 @@
           :if-invalid [:must :invalid-icon]
           ;; an icon is also expected to have a 1:1 aspect ratio, but that's
           ;; too much detail at this level of verification
-          :validator (fn [pv] (object-or-uri? pv "Image"))}
+          :validator (fn [pv] (coll-object-reference-or-faults pv "Image"
+                                                               :must
+                                                               :invalid-icon))}
    :id {:functional true
         :if-missing [:minor :no-id-transient]
         :if-invalid [:must :invalid-id]
@@ -261,13 +303,19 @@
                                  (catch URISyntaxException _ false)))}
    :image {:functional false
            :if-invalid [:must :invalid-image]
-           :validator (fn [pv] (object-or-uri? pv "Image"))}
+           :validator (fn [pv] (coll-object-reference-or-faults pv "Image"
+                                                                :must
+                                                                :invalid-image))}
    :inReplyTo {:functional false
                :if-invalid [:must :invalid-in-reply-to]
-               :validator (fn [pv] (object-or-uri? pv noun-types))}
+               :validator (fn [pv] (coll-object-reference-or-faults pv noun-types
+                                                                    :must
+                                                                    :invalid-in-reply-to))}
    :instrument {:functional false
                 :if-invalid [:must :invalid-instrument]
-                :validator object-or-uri?}
+                :validator (fn [pv] (coll-object-reference-or-faults pv nil
+                                                                     :must
+                                                                     :invalid-instrument))}
    :items {:collection true
            :functional false
            :if-invalid [:must :invalid-items]
@@ -298,8 +346,10 @@
                                (has-type? x #{"Collection"
                                               "OrderedCollection"})
                                (:first x))))
-          :validator (fn [pv] (object-or-uri? pv #{"CollectionPage"
-                                                   "OrderedCollectionPage"}))}
+          :validator (fn [pv] (object-reference-or-faults pv #{"CollectionPage"
+                                                               "OrderedCollectionPage"}
+                                                          :must
+                                                          :paged-collection-invalid-last))}
    :latitude {:functional true
               :if-invalid [:must :invalid-latitude]
               ;; The XSD spec says this is an IEEE 754-2008, and the IEEE
@@ -308,7 +358,9 @@
               :validator xsd-float?}
    :location {:functional false
               :if-invalid [:must :invalid-location]
-              :validator (fn [pv] (object-or-uri? pv #{"Place"}))}
+              :validator (fn [pv] (coll-object-reference-or-faults pv #{"Place"}
+                                                                   :must
+                                                                   :invalid-location))}
    :longitude {:functional true
                :if-invalid [:must :invalid-longitude]
                :validator xsd-float?}
@@ -320,18 +372,25 @@
           :validator string?}
    :next {:functional true
           :if-invalid [:must :invalid-next-page]
-          :validator (fn [pv] (object-or-uri? pv #{"CollectionPage"
-                                                   "OrderedCollectionPage"}))}
+          :validator (fn [pv] (object-reference-or-faults pv #{"CollectionPage"
+                                                               "OrderedCollectionPage"}
+                                                          :must
+                                                          :invalid-next-page))}
    :object {:functional false
             :if-invalid [:must :invalid-direct-object]
-            :validator object-or-uri?}
+            :validator (fn [pv]
+                         (coll-object-reference-or-faults pv nil
+                                                          :must
+                                                          :invalid-direct-object))}
    :oneOf {:collection true
            :functional false
            ;; a Question should have a `:oneOf` ot `:anyOf`, but at this layer
            ;; that's hard to check.
            :if-invalid [:must :invalid-option]
-           :validator object-or-uri?}
-
+           :validator (fn [pv]
+                        (coll-object-reference-or-faults pv nil
+                                                         :must
+                                                         :invalid-option))}
    :orderedItems {:collection true
                   :functional false
                   :if-invalid [:must :invalid-items]
@@ -346,29 +405,34 @@
                   :validator (fn [pv] (and (coll? pv) (every? object-or-uri? pv)))}
    :origin {:functional false
             :if-invalid [:must :invalid-origin]
-            :validator object-or-uri?}
+            :validator (fn [pv] (coll-object-reference-or-faults pv nil :must :invalid-origin))}
    :partOf {:functional true
             :if-missing [:must :missing-part-of]
             :if-invalid [:must :invalid-part-of]
-            :required (fn [x] (object-or-uri? x #{"CollectionPage"
-                                                  "OrderedCollectionPage"}))
-            :validator (fn [pv] (object-or-uri? pv #{"Collection"
-                                                     "OrderedCollection"}))}
+            :required object-or-uri?
+            :validator (fn [pv] (object-reference-or-faults pv #{"Collection"
+                                                                 "OrderedCollection"}
+                                                            :must
+                                                            :invalid-part-of))}
    :prev {:functional true
           :if-invalid [:must :invalid-prior-page]
-          :validator (fn [pv] (object-or-uri? pv #{"CollectionPage"
-                                                   "OrderedCollectionPage"}))}
+          :validator (fn [pv] (object-reference-or-faults pv #{"CollectionPage"
+                                                               "OrderedCollectionPage"}
+                                                          :must
+                                                          :invalid-prior-page))}
    :preview {:functional false
              :if-invalid [:must :invalid-preview]
              ;; probably likely to be an Image or Video, but that isn't stated.
-             :validator object-or-uri?}
+             :validator (fn [pv] (coll-object-reference-or-faults pv nil :must :invalid-preview))}
    :published {:functional true
                :if-invalid [:must :invalid-date-time]
                :validator xsd-date-time?}
    :replies {:functional true
              :if-invalid [:must :invalid-replies]
-             :validator (fn [pv] (object-or-uri? pv #{"Collection"
-                                                      "OrderedCollection"}))}
+             :validator (fn [pv] (object-reference-or-faults pv #{"Collection"
+                                                                  "OrderedCollection"}
+                                                             :must
+                                                             :invalid-replies))}
    :radius {:functional true
             :if-invalid [:must :invalid-positive-number]
             :validator (fn [pv] (and (xsd-float? pv) (> pv 0)))}
@@ -381,7 +445,10 @@
                   }
    :result {:functional false
             :if-invalid [:must :invalid-result]
-            :validator object-or-uri?}
+            :validator (fn [pv]
+                         (coll-object-reference-or-faults pv nil
+                                                          :must
+                                                          :invalid-result))}
    :startIndex {:functional true
                 :if-invalid [:must :invalid-start-index]
                 :validator xsd-non-negative-integer?}
@@ -392,7 +459,9 @@
              :if-invalid [:must :invalid-subject]
              :if-missing [:minor :no-relationship-subject]
              :required (fn [x] (has-type? x "Relationship"))
-             :validator object-or-uri?}
+             :validator (fn [pv] (object-reference-or-faults pv nil
+                                                             :must
+                                                             :invalid-subject))}
    :summary {:functional false
              :if-invalid [:must :invalid-summary]
              ;; TODO: HTML formatting is allowed, but other forms of formatting
@@ -400,13 +469,22 @@
              :validator string?}
    :tag {:functional false
          :if-invalid [:must :invalid-tag]
-         :validator object-or-uri?}
+         :validator (fn [pv]
+                      (coll-object-reference-or-faults pv nil
+                                                       :must
+                                                       :invalid-tag))}
    :target {:functional false
             :if-invalid [:must :invalid-target]
-            :validator object-or-uri?}
+            :validator (fn [pv]
+                         (coll-object-reference-or-faults pv nil
+                                                          :must
+                                                          :invalid-target))}
    :to {:functional false
         :if-invalid [:must :invalid-to]
-        :validator (fn [pv] (object-or-uri? pv actor-types))}
+        :validator (fn [pv]
+                     (coll-object-reference-or-faults pv actor-types
+                                                      :must
+                                                      :invalid-to))}
    :totalItems {:functional true
                 :if-invalid [:must :invalid-total-items]
                 :validator xsd-non-negative-integer?}
@@ -434,7 +512,7 @@
   "Check whether this `prop` of this `obj` is required with respect to 
    this `clause`; if it is both required and missing, return a list of
    one fault; else return `nil`."
-   [obj prop clause]
+  [obj prop clause]
   (let [required (:required clause)
         [severity token] (:if-missing clause)]
     (when required
@@ -524,21 +602,3 @@
       (list
        (has-type-or-fault x expected-type :critical :unexpected-type))))))
 
-;; (defn coll-object-reference-or-fault
-;;   "As object-reference-or-fault, except `value` argument may also be a list of
-;;    objects and/or object references."
-;;   [value expected-type severity token]
-;;   (cond
-;;     (map? value) (object-reference-or-faults value expected-type severity token)
-;;     (coll? value) (concat-non-empty
-;;                    (map
-;;                     #(object-reference-or-faults
-;;                       % expected-type severity token)
-;;                     value))
-;;     :else (throw
-;;            (ex-info
-;;             "Argument `value` was not an object, a link to an object, nor a list of these."
-;;             {:arguments {:value value}
-;;              :expected-type expected-type
-;;              :severity severity
-;;              :token token}))))

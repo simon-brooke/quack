@@ -149,7 +149,9 @@
                                     (java.time.LocalDateTime/now)
                                     (get-message :by)
                                     version]))]
-        [:h2 (get-message :faults-found)]
+        [:h2 (join  " " (list (get-message :the-following)
+                              (count faults)
+                              (get-message :faults-found)))]
         (if-not
          (empty? faults)
           (apply

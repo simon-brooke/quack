@@ -12,7 +12,7 @@ Download from http://example.com/FIXME.
 
 ## Usage
 
-```
+```bash
 java -jar target/dog-and-duck-0.1.0-standalone.jar -i resources/activitystreams-test-documents/vocabulary-ex10-jsonld.json -f html -o report.html -s info
 ```
 

@@ -44,7 +44,7 @@
    "Return `true` if `value` matches the pattern for an 
     [xsd:nonNegativeInteger](https://www.w3.org/TR/xmlschema11-2/#nonNegativeInteger), else `false`"
    [x]
-   (and (integer? x)(>= x 0)))
+   (if (integer? x) (>= x 0) false))
 
 (defn has-type?
   "Return `true` if object `x` has a type in `acceptable`, else `false`.
@@ -224,7 +224,7 @@
    (coll? x)
    (seq x)
    (every?
-    #(has-type? % "Fault") x)))
+    #(when (map? x)(has-type? % "Fault")) x)))
 
 
 (defmacro nil-if-empty
