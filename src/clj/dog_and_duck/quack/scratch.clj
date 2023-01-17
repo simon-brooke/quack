@@ -1,6 +1,9 @@
 (ns dog-and-duck.quack.scratch
   "Development scratchpad"
-  (:require [dog-and-duck.quack.objects :refer [object-expected-properties]]
+  (:require [clojure.data.json :refer [read-str]]
+            [clojure.pprint :refer [pprint]]
+            [clojure.walk :refer [keywordize-keys]]
+            [dog-and-duck.quack.objects :refer [object-expected-properties]]
             [dog-and-duck.quack.utils :refer [concat-non-empty]]))
 
 (defn missing-messages
@@ -21,3 +24,8 @@
 ;;                                :id "https://illuminator.local/fault/25785:1673378166063", :type "Fault", :severity :minor, :fault :no-id-transient, :narrative "The ActivityPub specification allows objects without `id` fields only if they are intentionally transient; even so it is preferred that the object should have an explicit null id."} 
 ;;                               ({:@context "https://simon-brooke.github.io/dog-and-duck/codox/Validation_Faults.html", 
 ;;                                 :id "https://illuminator.local/fault/25785:1673378166069", :type "Fault", :severity :must, :fault :invalid-type, :narrative "invalid-type"})), :severity :info}})
+
+(def obj (keywordize-keys 
+          (read-str 
+           (slurp "../dog-and-duck/resources/activitystreams-test-documents//vocabulary-ex190-jsonld.json")
+           )))

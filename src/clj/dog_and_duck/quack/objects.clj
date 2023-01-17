@@ -1,6 +1,8 @@
 (ns dog-and-duck.quack.objects
   (:require [clojure.data.json :as json]
+            [clojure.pprint :refer [pprint]]
             [clojure.set :refer [union]]
+            [clojure.string :refer [join]]
             [clojure.walk :refer [keywordize-keys]]
             [dog-and-duck.quack.constants :refer [actor-types
                                                   noun-types
@@ -20,7 +22,7 @@
                                               object-or-uri?
                                               truthy?
                                               xsd-non-negative-integer?]]
-            [taoensso.timbre :refer [warn]])
+            [taoensso.timbre :refer [info warn error]])
   (:import [java.io FileNotFoundException]
            [java.net URI URISyntaxException]))
 
@@ -138,6 +140,35 @@
              :severity severity
              :token token}))))
 
+(defn- percentage-value?
+  "Return `true` if `x` is a number between 0 and 100 inclusive, else
+   `false`."
+  [x]
+  (try (and (xsd-float? x)
+            (>= x 0)
+            (<= x 100))
+       (catch Exception any
+         (error (join " "
+                      ["Unexpected value ("
+                       x
+                       ") passed to `percentage-value?`:"
+                       (-> any .getClass .getName)
+                       ":" (.getMessage any)]))
+         false)))
+
+(defn positive?
+  "Return `true` if `x` is a number which is greater than 0, else `false`"
+  [x]
+  (try
+    (pos? x)
+    (catch Exception any
+      (error (join " "
+                   ["Unexpected value ("
+                    x
+                    ") passed to `positive?`:"
+                    (-> any .getClass .getName)
+                    ":" (.getMessage any)]))
+      false)))
 
 (def object-expected-properties
   "Requirements of properties of object, cribbed from
@@ -162,9 +193,7 @@
       which will be applied to the value or values of the identified property."
   {:accuracy {:functional false
               :if-invalid [:must :invalid-number]
-              :validator (fn [pv] (and (xsd-float? pv)
-                                       (>= pv 0)
-                                       (<= pv 100)))}
+              :validator percentage-value?}
    :actor {:functional false
            :if-invalid [:must :invalid-actor]
            :if-missing [:must :no-actor]
@@ -435,7 +464,7 @@
                                                              :invalid-replies))}
    :radius {:functional true
             :if-invalid [:must :invalid-positive-number]
-            :validator (fn [pv] (and (xsd-float? pv) (> pv 0)))}
+            :validator positive?}
    :rel {:functional false
          :if-invalid [:must :invalid-link-relation]
          ;; TODO: this is not really good enough.
@@ -526,6 +555,11 @@
    return `nil` if no faults are found, else a list of faults."
   [obj prop clause]
   ;; (info "obj" obj "prop" prop "clause" clause)
+  (info (join " " ["Checking validity of property" 
+                   prop "of object\n" (with-out-str 
+                                        (pprint obj))
+                   "\nusing clause\n"
+                   (with-out-str (pprint clause))]))
   (let [val (obj prop)
         validator (:validator clause)
         [severity token] (:if-invalid clause)]
